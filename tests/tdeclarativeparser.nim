@@ -38,6 +38,25 @@ suite "Declarative parsing":
     for pkg in expectedPkgs:
       check pkg in requires.mapIt(it[0])
   
+  test "should not split dependency feature lists on commas (#1832)":
+    let content = """
+version = "0.1.0"
+requires "figdraw[siwin, sharedlib, harfbuzz] >= 0.35.2"
+requires "sigils[sigNameAsString,closures,siwin,chronos] >= 0.27.4"
+requires "plaindep, otherdep"
+"""
+    var options = initOptions()
+    let nimbleFileInfo = extractRequiresInfoFromContent(content, options)
+    var activeFeatures = initTable[PkgTuple, seq[string]]()
+    let requires = nimbleFileInfo.getRequires(activeFeatures)
+    check requires.mapIt(it.name) == @["figdraw", "sigils", "plaindep", "otherdep"]
+    check activeFeatures.len == 2
+    for pkgTuple, features in activeFeatures:
+      if pkgTuple.name == "figdraw":
+        check features == @["siwin", "sharedlib", "harfbuzz"]
+      elif pkgTuple.name == "sigils":
+        check features == @["sigNameAsString", "closures", "siwin", "chronos"]
+
   test "should detect nested requires and fail":
     let nimbleFile = getNimbleFileFromPkgNameHelper("jester")
     var options = initOptions()

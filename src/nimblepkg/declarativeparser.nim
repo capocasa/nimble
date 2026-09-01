@@ -620,14 +620,30 @@ iterator tokenizeRequires*(s: string): string =
 
 proc parseRequiresWithFeatures(require: string): seq[(PkgTuple, seq[string])] =
   #features are expressed like this: require[feature1, feature2]
+  #Split on commas outside of feature lists only; commas inside a feature
+  #list belong to the dependency (fixes #1832).
   result = newSeq[(PkgTuple, seq[string])]()
-  for req in require.split(",").mapIt(it.strip):
+  var depth = 0
+  var depStart = 0
+  var deps: seq[string]
+  for i, ch in require:
+    case ch
+    of '[': inc depth
+    of ']': dec depth
+    of ',':
+      if depth == 0:
+        deps.add require[depStart ..< i]
+        depStart = i + 1
+    else: discard
+  deps.add require[depStart .. ^1]
+  for req in deps:
+    let req = req.strip
+    if req.len == 0: continue
     var featuresStr: string
     var requireStr: string
-    var features = newSeq[string]()
     if scanf(req, "$*[$*]", requireStr, featuresStr):
-      features = featuresStr.split(",")
-      result.add((parseRequires(requireStr), features))
+      let features = featuresStr.split(",").mapIt(it.strip)
+      result.add((parseRequires(requireStr.strip), features))
     else:
       result.add((parseRequires(req), @[]))
 
@@ -827,6 +843,7 @@ proc getMinimalInfoFromContent*(content: string, name: string, version: Version,
 
   # Parse requires from string list to PkgTuple list
   var activeFeatures = initTable[PkgTuple, seq[string]]()
+  pkgInfo.features = info.getFeatures()
   pkgInfo.requires = info.getRequires(activeFeatures).map(convertNimAliasToNim)
 
   return some(pkgInfo)

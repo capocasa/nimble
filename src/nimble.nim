@@ -1215,6 +1215,11 @@ proc updatePathsFile(pkgInfo: PackageInfo, options: Options, nimBin: Option[stri
   for path in options.getPathsAllPkgs(nimBin):
     paths.incl @[path]
   var pathsFileContent = "--noNimblePath\n"
+  # Emit defines for features activated by the dependency graph (e.g.
+  # `requires "sigils[chronos]"`) so direct `nim c` invocations see the same
+  # feature symbols nimble's own build passes would add (fixes #1832).
+  for featureStr in getGloballyActiveFeatures():
+    pathsFileContent &= &"--define:{featureStr}\n"
   for path in paths:
     for p in path:
       pathsFileContent &= &"--path:{p.escape}\n"

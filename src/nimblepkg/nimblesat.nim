@@ -966,6 +966,23 @@ proc solveLocalPackages(root: PackageMinimalInfo, pkgList: seq[PackageInfo], opt
         break
   return pkgs
 
+proc collectFeatureDeps*(discoveredVersions: Table[system.string, packageinfotypes.PackageVersions]): seq[PkgTuple] =
+  ## Requires of dependency features activated via `requires "pkg[feature]"`,
+  ## looked up in the features tables of discovered package versions. Used to
+  ## inject feature deps into the root so the SAT graph resolves them (fixes
+  ## #1832).
+  for featureStr in getGloballyActiveFeatures():
+    let parts = featureStr.split(".")
+    if parts.len != 3: continue
+    let pkgName = parts[1].toLowerAscii
+    let featureName = parts[2]
+    if pkgName notin discoveredVersions: continue
+    for pkgMin in discoveredVersions[pkgName].versions:
+      if featureName in pkgMin.features:
+        for req in pkgMin.features[featureName]:
+          result.addUnique convertNimAliasToNim(req)
+        break # feature deps are the same across versions in practice; one is enough
+
 proc solvePackages*(rootPkg: PackageInfo, pkgList: seq[PackageInfo], pkgsToInstall: var seq[(string, Version)], options: Options, output: var string, solvedPkgs: var seq[SolvedPackage], nimBin: Option[string]): HashSet[PackageInfo] {.instrument.} =
   var root: PackageMinimalInfo = rootPkg.getMinimalInfo(options)
   root.isRoot = true
@@ -995,6 +1012,18 @@ proc solvePackages*(rootPkg: PackageInfo, pkgList: seq[PackageInfo], pkgsToInsta
   pkgVersionTable[root.name] = PackageVersions(pkgName: root.name, versions: @[root])
 
   let discoveredVersions = waitFor collectAllVersions(root, options, downloadMinimalPackage, pkgList.mapIt(it.getMinimalInfo(options)), nimBin)
+
+  # Inject the requires of dependency features the root activates via
+  # `requires "pkg[feature]"` into the root, so the SAT graph always resolves
+  # them regardless of which version of the dependency is picked (fixes #1832).
+  # Remote package versions carry a features table but cannot receive extra
+  # requires until after the solve.
+  let allFeatureDeps = discoveredVersions[].collectFeatureDeps()
+  if allFeatureDeps.len > 0:
+    var rootWithFeatures = root
+    rootWithFeatures.requires &= allFeatureDeps
+    pkgVersionTable[root.name] = PackageVersions(pkgName: root.name, versions: @[rootWithFeatures])
+
   for pkgName, pkgVersions in discoveredVersions:
     if pkgName notin pkgVersionTable:
       pkgVersionTable[pkgName] = pkgVersions
@@ -1332,6 +1361,13 @@ proc enableFeatures*(rootPackage: var PackageInfo, options: var Options) =
     var resolvedName = pkgName[0]
     if resolvedName.isFileURL:
       resolvedName = extractFilePathFromURL(resolvedName).lastPathPart
+    if resolvedName.isUrl:
+      # URL package names cannot be used in `features.<pkg>.<feat>` defines,
+      # they are not valid nim symbols. Use the repo directory name instead.
+      var repoName = resolvedName.split('/')[^1]
+      repoName.removeSuffix(".git")
+      if repoName.len > 0:
+        resolvedName = repoName
     appendGloballyActiveFeatures(resolvedName, activeFeatures)
     # Add the feature's requires directly to the root package so the SAT solver
     # always resolves them, regardless of which version of the dependency is picked
