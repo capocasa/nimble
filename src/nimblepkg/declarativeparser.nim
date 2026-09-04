@@ -11,7 +11,7 @@ import compat/[msgs, sequtils, syntaxes]
 import version, packageinfotypes, packageinfo, options, packageparser, cli,
   packagemetadatafile, common
 import sha1hashes, vcstools, urls
-import std/[tables, strscans, strformat, os, options, sets, times]
+import std/[tables, strformat, os, options, sets, times]
 import tools
 
 type
@@ -618,32 +618,43 @@ iterator tokenizeRequires*(s: string): string =
     yield tok
 
 
-proc parseRequiresWithFeatures(require: string): seq[(PkgTuple, seq[string])] =
-  #features are expressed like this: require[feature1, feature2]
-  #Split on commas outside of feature lists only; commas inside a feature
-  #list belong to the dependency (fixes #1832).
-  result = newSeq[(PkgTuple, seq[string])]()
-  var depth = 0
-  var depStart = 0
-  var deps: seq[string]
-  for i, ch in require:
-    case ch
-    of '[': inc depth
-    of ']': dec depth
+iterator splitRequirements(require: string): string =
+  ## Split package requirements on commas outside dependency feature lists.
+  var bracketDepth = 0
+  var start = 0
+  for i, c in require:
+    case c
+    of '[':
+      inc bracketDepth
+    of ']':
+      if bracketDepth > 0:
+        dec bracketDepth
     of ',':
-      if depth == 0:
-        deps.add require[depStart ..< i]
-        depStart = i + 1
-    else: discard
-  deps.add require[depStart .. ^1]
-  for req in deps:
-    let req = req.strip
-    if req.len == 0: continue
-    var featuresStr: string
-    var requireStr: string
-    if scanf(req, "$*[$*]", requireStr, featuresStr):
-      let features = featuresStr.split(",").mapIt(it.strip)
-      result.add((parseRequires(requireStr.strip), features))
+      if bracketDepth == 0:
+        yield require[start ..< i].strip
+        start = i + 1
+    else:
+      discard
+
+  if start < require.len:
+    yield require[start .. ^1].strip
+  else:
+    yield ""
+
+proc parseRequiresWithFeatures(require: string): seq[(PkgTuple, seq[string])] =
+  # Features are expressed as require[feature1, feature2]. The version range
+  # may appear before or after that suffix, so remove only the bracketed list.
+  for req in splitRequirements(require):
+    if req.len == 0:
+      continue
+
+    let openBracket = req.find('[')
+    let closeBracket = req.find(']', openBracket + 1)
+    if openBracket >= 0 and closeBracket > openBracket:
+      let features = req[openBracket + 1 ..< closeBracket]
+        .split(",").mapIt(it.strip)
+      let requireStr = (req[0 ..< openBracket] & req[closeBracket + 1 .. ^1]).strip
+      result.add((parseRequires(requireStr), features))
     else:
       result.add((parseRequires(req), @[]))
 
@@ -868,4 +879,3 @@ proc getMinimalInfo*(nimbleFile: string, options: Options, nimBin: Option[string
   # declarative parser is always used
   let pkg = getPkgInfo(nimbleFile.parentDir, options, nimBin, pikRequires)
   result = pkg.getMinimalInfo(options)
-
