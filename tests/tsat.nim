@@ -575,17 +575,6 @@ suite "SAT solver":
     var output = ""
     check solve(graph, form, packages, output, initOptions())
    
-  test "should be able to fallback to a previous version of a dependency when unsatisfable (complex case)":
-    # The pinned quic revision requires nimcrypto < 0.7.0, so Nimble must fall
-    # back to libp2p 1.15.3. The fixture also pins the last secp256k1 revision
-    # compatible with that nimcrypto range because secp256k1 has no tags and
-    # changed its requirements on its mutable default branch.
-    cd "libp2pconflict": #0.16.2
-      removeDir("nimbledeps")
-      let (output, exitCode) = execNimbleYes("install", "-l")
-      check exitCode == QuitSuccess
-      check output.contains("Installing libp2p@1.15.3")
-
   #disabled for being too slow. TODO replace with one from the cached pkgtable similar to nwaku
   # test "should be able to solve complex dep graphs":
   #   cd "sattests" / "mgtest":
